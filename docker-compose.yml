@@ -1,16 +1,54 @@
 services:
+  discovery-server:
+    image: eclipse-temurin:21-jre-jammy
+    volumes:
+      - ./infra/discovery-server/target/discovery-server-0.0.1-SNAPSHOT.jar:/app.jar:ro
+    command: java -jar /app.jar
+    restart: on-failure
+    ports:
+      - "8761:8761"
+
+  config-server:
+    image: eclipse-temurin:21-jre-jammy
+    volumes:
+      - ./infra/config-server/target/config-server-0.0.1-SNAPSHOT.jar:/app.jar:ro
+    command: java -jar /app.jar
+    restart: on-failure
+    depends_on:
+      - discovery-server
+    environment:
+      - EUREKA_SERVER_URL=http://discovery-server:8761/eureka/
+      - EUREKA_INSTANCE_HOSTNAME=config-server
+
+  gateway-server:
+    image: eclipse-temurin:21-jre-jammy
+    volumes:
+      - ./infra/gateway-server/target/gateway-server-0.0.1-SNAPSHOT.jar:/app.jar:ro
+    command: java -jar /app.jar
+    restart: on-failure
+    ports:
+      - "8080:8080"
+    depends_on:
+      - config-server
+      - ewm-service
+    environment:
+      - EUREKA_SERVER_URL=http://discovery-server:8761/eureka/
+      - EUREKA_INSTANCE_HOSTNAME=gateway-server
+
   stats-server:
     build:
-      context: ewm-stats-service
+      context: stats
       dockerfile: Dockerfile
     container_name: ewm-stats-service
     restart: on-failure
-    ports:
-      - "${STATS_SERVER_HOST_PORT}:${STATS_SERVER_CONTAINER_PORT}"
     depends_on:
+      config-server:
+        condition: service_started
       stats-db:
         condition: service_healthy
     environment:
+      - EUREKA_SERVER_URL=http://discovery-server:8761/eureka/
+      - EUREKA_INSTANCE_HOSTNAME=stats-server
       - SPRING_DATASOURCE_URL=${STATS_DB_URL}
       - SPRING_DATASOURCE_USERNAME=${STATS_DB_USERNAME}
       - SPRING_DATASOURCE_PASSWORD=${STATS_DB_PASSWORD}
@@ -33,22 +71,23 @@ services:
 
   ewm-service:
     build:
-      context: ewm-main-service
+      context: core/main-service
       dockerfile: Dockerfile
     container_name: ewm-main-service
     restart: on-failure
-    ports:
-      - "${EWM_SERVICE_HOST_PORT}:${EWM_SERVICE_CONTAINER_PORT}"
     depends_on:
+      config-server:
+        condition: service_started
       ewm-db:
         condition: service_healthy
       stats-server:
         condition: service_started
     environment:
+      - EUREKA_SERVER_URL=http://discovery-server:8761/eureka/
+      - EUREKA_INSTANCE_HOSTNAME=ewm-service
       - SPRING_DATASOURCE_URL=${EWM_DB_URL}
       - SPRING_DATASOURCE_USERNAME=${EWM_DB_USERNAME}
       - SPRING_DATASOURCE_PASSWORD=${EWM_DB_PASSWORD}
-      - STATS_SERVER_URL=${STATS_SERVER_URL}
 
   ewm-db:
     image: postgres:16.1
